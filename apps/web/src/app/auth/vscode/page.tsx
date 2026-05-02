@@ -1,11 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useUser, SignIn } from '@clerk/nextjs';
+import { useUser, useAuth, SignIn } from '@clerk/nextjs';
 import { useSearchParams } from 'next/navigation';
 
 export default function VsCodeAuthPage() {
   const { isLoaded, isSignedIn, user } = useUser();
+  const { getToken } = useAuth();
   const searchParams = useSearchParams();
   const [status, setStatus] = useState<'loading' | 'redirecting' | 'error'>('loading');
 
@@ -23,7 +24,7 @@ export default function VsCodeAuthPage() {
   async function generateCodeAndRedirect() {
     try {
       setStatus('redirecting');
-      const clerkToken = await user?.getToken();
+      const clerkToken = await getToken();
       const apiBase = process.env.NEXT_PUBLIC_API_URL;
 
       const res = await fetch(
