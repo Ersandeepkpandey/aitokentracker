@@ -85,11 +85,13 @@ export const webhookRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /webhooks/clerk
   app.post('/clerk', async (req, reply) => {
-    const svix = new Webhook(process.env.CLERK_WEBHOOK_SECRET!);
+    const wh = new Webhook(process.env.CLERK_WEBHOOK_SECRET!);
+    // req.body is a Buffer (raw parser above) — pass it directly, not JSON.stringify
+    const body = req.body as Buffer;
     let event: any;
 
     try {
-      event = svix.verify(JSON.stringify(req.body), {
+      event = wh.verify(body, {
         'svix-id':        req.headers['svix-id'] as string,
         'svix-timestamp': req.headers['svix-timestamp'] as string,
         'svix-signature': req.headers['svix-signature'] as string,
@@ -98,22 +100,41 @@ export const webhookRoutes: FastifyPluginAsync = async (app) => {
       return reply.status(400).send({ error: 'Invalid signature' });
     }
 
-    if (event.type === 'user.created') {
-      const { id, email_addresses, first_name, last_name, image_url } = event.data;
+    // svix returns the parsed payload — but if it doesn't, parse manually
+    const payload = typeof event === 'object' ? event : JSON.parse(body.toString('utf8'));
+
+    if (payload.type === 'user.created') {
+      const { id, email_addresses, first_name, last_name, image_url } = payload.data;
       await prisma.user.upsert({
         where: { clerkId: id },
-        update: {},
+        update: {
+          email: email_addresses[0]?.email_address || '',
+          name: `${first_name || ''} ${last_name || ''}`.trim() || 'User',
+          avatarUrl: image_url ?? null,
+        },
         create: {
           clerkId: id,
           email: email_addresses[0]?.email_address || '',
           name: `${first_name || ''} ${last_name || ''}`.trim() || 'User',
-          avatarUrl: image_url,
+          avatarUrl: image_url ?? null,
         },
       });
     }
 
-    if (event.type === 'user.deleted') {
-      await prisma.user.deleteMany({ where: { clerkId: event.data.id } });
+    if (payload.type === 'user.updated') {
+      const { id, email_addresses, first_name, last_name, image_url } = payload.data;
+      await prisma.user.updateMany({
+        where: { clerkId: id },
+        data: {
+          email: email_addresses[0]?.email_address || '',
+          name: `${first_name || ''} ${last_name || ''}`.trim() || 'User',
+          avatarUrl: image_url ?? null,
+        },
+      });
+    }
+
+    if (payload.type === 'user.deleted') {
+      await prisma.user.deleteMany({ where: { clerkId: payload.data.id } });
     }
 
     return reply.send({ received: true });

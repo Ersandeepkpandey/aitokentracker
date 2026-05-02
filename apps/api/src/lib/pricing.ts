@@ -5,7 +5,7 @@ interface PricingTier {
   cacheWrite: number;
 }
 
-const PRICING: Record<string, PricingTier> = {
+export const PRICING: Record<string, PricingTier> = {
   'claude-opus-4':      { input: 15.00, output: 75.00, cacheRead: 1.50,  cacheWrite: 18.75 },
   'claude-opus-4-5':    { input: 15.00, output: 75.00, cacheRead: 1.50,  cacheWrite: 18.75 },
   'claude-sonnet-4':    { input:  3.00, output: 15.00, cacheRead: 0.30,  cacheWrite:  3.75 },
@@ -16,7 +16,7 @@ const PRICING: Record<string, PricingTier> = {
   'gemini-1.5-pro':     { input:  1.25, output:  5.00, cacheRead: 0.3125,cacheWrite:  0    },
 };
 
-const DEFAULT_TIER: PricingTier = { input: 3.00, output: 15.00, cacheRead: 0.30, cacheWrite: 3.75 };
+export const DEFAULT_TIER: PricingTier = { input: 3.00, output: 15.00, cacheRead: 0.30, cacheWrite: 3.75 };
 
 export function calcCost(params: {
   model: string;

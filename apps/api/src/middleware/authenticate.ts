@@ -1,4 +1,5 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
+import { verifyToken } from '@clerk/backend';
 import { prisma } from '../lib/prisma';
 import { verifyJwt } from '../lib/jwt';
 import { Plan } from '@prisma/client';
@@ -14,28 +15,60 @@ declare module 'fastify' {
 export async function authenticate(req: FastifyRequest, reply: FastifyReply) {
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!token) {
-    reply.status(401).send({ error: 'Unauthorized' });
-    return;
+    return reply.status(401).send({ error: 'Unauthorized' });
   }
 
+  // ── Path 1: our own JWT (VS Code extension after /auth/exchange) ──────────
   try {
     const payload = verifyJwt(token);
-
     const user = await prisma.user.findUnique({
-      where: { id: payload.userId },
+      where:  { id: payload.userId },
+      select: { id: true, plan: true, clerkId: true },
+    });
+    if (user) {
+      req.userId      = user.id;
+      req.userPlan    = user.plan;
+      req.clerkUserId = user.clerkId;
+      return; // authenticated
+    }
+  } catch {
+    // Not our JWT — fall through to Clerk verification
+  }
+
+  // ── Path 2: Clerk session token (web dashboard) ───────────────────────────
+  try {
+    const clerkPayload = await verifyToken(token, {
+      secretKey: process.env.CLERK_SECRET_KEY!,
+      authorizedParties: [process.env.APP_BASE!, 'http://localhost:3000', 'http://localhost:3001'],
+    });
+    const clerkUserId  = clerkPayload.sub;
+
+    let user = await prisma.user.findUnique({
+      where:  { clerkId: clerkUserId },
       select: { id: true, plan: true, clerkId: true },
     });
 
+    // Auto-provision user if they signed in via Clerk but the webhook hasn't fired yet
     if (!user) {
-      reply.status(401).send({ error: 'User not found' });
-      return;
+      const claims = clerkPayload as any;
+      const email: string = claims.email ?? claims.primary_email_address ?? '';
+      const name: string  = claims.name ?? claims.full_name ?? ([claims.first_name, claims.last_name].filter(Boolean).join(' ') || 'User');
+      const avatarUrl: string | null = claims.image_url ?? claims.profile_image_url ?? null;
+
+      user = await prisma.user.upsert({
+        where:  { clerkId: clerkUserId },
+        update: {},
+        create: { clerkId: clerkUserId, email, name, avatarUrl },
+        select: { id: true, plan: true, clerkId: true },
+      });
     }
 
-    req.userId = user.id;
-    req.userPlan = user.plan;
+    req.userId      = user.id;
+    req.userPlan    = user.plan;
     req.clerkUserId = user.clerkId;
-  } catch {
-    reply.status(401).send({ error: 'Invalid token' });
+  } catch (err) {
+    console.error('[auth] Clerk token verification failed:', err);
+    return reply.status(401).send({ error: 'Invalid token' });
   }
 }
 
@@ -43,11 +76,11 @@ export function requirePlan(minPlan: Plan) {
   const hierarchy: Record<Plan, number> = { FREE: 0, PRO: 1, TEAM: 2, ENTERPRISE: 3 };
   return async (req: FastifyRequest, reply: FastifyReply) => {
     if (hierarchy[req.userPlan] < hierarchy[minPlan]) {
-      reply.status(403).send({
-        error: 'upgrade_required',
+      return reply.status(403).send({
+        error:        'upgrade_required',
         requiredPlan: minPlan,
-        currentPlan: req.userPlan,
-        upgradeUrl: `${process.env.APP_BASE_URL}/pricing`,
+        currentPlan:  req.userPlan,
+        upgradeUrl:   `${process.env.APP_BASE_URL}/pricing`,
       });
     }
   };

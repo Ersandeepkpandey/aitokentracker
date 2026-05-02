@@ -9,13 +9,20 @@ import { userRoutes } from './routes/user';
 import { teamRoutes } from './routes/team';
 import { webhookRoutes } from './routes/webhooks';
 import { prisma } from './lib/prisma';
+import { startCronJobs } from './jobs/cron';
 
 const app = Fastify({ logger: true });
 
 async function start() {
   await app.register(helmet);
   await app.register(cors, {
-    origin: [process.env.APP_BASE_URL!, 'vscode-webview://*'],
+    origin: [
+      process.env.APP_BASE_URL!,
+      process.env.APP_BASE!,
+      'http://localhost:3000',
+      'http://localhost:3002',
+      'vscode-webview://*',
+    ],
     credentials: true,
   });
   await app.register(rateLimit, {
@@ -36,6 +43,7 @@ async function start() {
   const port = parseInt(process.env.PORT || '3001');
   await app.listen({ port, host: '0.0.0.0' });
   console.log(`API running on port ${port}`);
+  startCronJobs();
 
   process.on('SIGTERM', async () => {
     await app.close();

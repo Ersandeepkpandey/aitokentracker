@@ -11,7 +11,7 @@ interface Session {
   sessionStartedAt: string;
 }
 
-export default function SessionsTable({ sessions }: { sessions: Session[] }) {
+export default function SessionsTable({ sessions, isPro = false }: { sessions: Session[]; isPro?: boolean }) {
   if (sessions.length === 0) {
     return (
       <p className="text-sm text-gray-400 text-center py-8">
@@ -42,7 +42,7 @@ export default function SessionsTable({ sessions }: { sessions: Session[] }) {
               <td className="py-2.5 text-gray-700">{s.projectName}</td>
               <td className="py-2.5 text-gray-700">{s.model}</td>
               <td className="py-2.5 text-right text-gray-600">{fmtTokens(s.totalTokens)}</td>
-              <td className="py-2.5 text-right text-gray-600">${s.totalCostUsd.toFixed(4)}</td>
+              <td className="py-2.5 text-right text-gray-600">{isPro ? `$${s.totalCostUsd.toFixed(4)}` : '—'}</td>
               <td className="py-2.5 text-right text-gray-600">{s.turnCount}</td>
             </tr>
           ))}

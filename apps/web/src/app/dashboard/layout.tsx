@@ -5,6 +5,7 @@ const nav = [
   { href: '/dashboard',          label: 'Overview' },
   { href: '/dashboard/sessions', label: 'Sessions' },
   { href: '/dashboard/projects', label: 'Projects' },
+  { href: '/dashboard/models',   label: 'Models' },
   { href: '/dashboard/settings', label: 'Settings' },
 ];
 
@@ -27,14 +28,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </Link>
           ))}
         </nav>
-        <div className="px-5 py-4 border-t border-gray-100 flex items-center gap-3">
-          <UserButton afterSignOutUrl="/" />
-          <span className="text-sm text-gray-500">Account</span>
-        </div>
       </aside>
 
       {/* Main */}
-      <main className="flex-1 bg-gray-50 overflow-y-auto">{children}</main>
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <header className="h-14 bg-white border-b border-gray-200 flex items-center justify-end px-6 shrink-0">
+          <UserButton afterSignOutUrl="/" />
+        </header>
+        <main className="flex-1 bg-gray-50 overflow-y-auto">{children}</main>
+      </div>
     </div>
   );
 }

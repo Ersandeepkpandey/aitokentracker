@@ -113,6 +113,12 @@ model UsageSession {
   vsCodeVersion     String?
   extensionVersion  String?
   osType            String?
+  sdkVersion        String?
+
+  // Pre-send warning data (populated by SDK wrapper)
+  preSendInputTokens  Int?
+  preSendInputCost    Float?
+  warningShown        Boolean  @default(false)
 
   sessionStartedAt  DateTime @default(now())
   lastUpdatedAt     DateTime @updatedAt

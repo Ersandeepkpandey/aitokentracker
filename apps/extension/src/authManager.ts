@@ -26,7 +26,8 @@ export class AuthManager {
   async isAuthenticated(): Promise<boolean> {
     const session = await this.getSession();
     if (!session) return false;
-    if (session.expiresAt < Date.now()) {
+    // If token expires within the next 5 minutes, refresh now
+    if (session.expiresAt < Date.now() + 5 * 60 * 1000) {
       return this.tryRefresh(session);
     }
     return true;
@@ -34,7 +35,7 @@ export class AuthManager {
 
   async signIn(): Promise<UserSession | null> {
     const state = crypto.randomBytes(16).toString('hex');
-    const port = await this.getFreePort();
+    const port  = await this.getFreePort();
     const callbackUrl = `http://127.0.0.1:${port}/callback`;
     const authUrl = `${APP_BASE}/auth/vscode?state=${state}&callback=${encodeURIComponent(callbackUrl)}`;
 
@@ -44,27 +45,23 @@ export class AuthManager {
       const server = http.createServer(async (req, res) => {
         const url = new URL(req.url || '/', `http://127.0.0.1:${port}`);
         if (url.pathname !== '/callback') {
-          res.writeHead(404);
-          res.end();
-          return;
+          res.writeHead(404); res.end(); return;
         }
 
-        const code = url.searchParams.get('token');
+        const code          = url.searchParams.get('token');
         const returnedState = url.searchParams.get('state');
 
         res.writeHead(200, { 'Content-Type': 'text/html' });
-        res.end(`
-          <html><body style="font-family:sans-serif;text-align:center;padding:60px">
-            <h2>Connected to VS Code!</h2>
-            <p>You can close this tab and return to VS Code.</p>
-          </body></html>
-        `);
+        res.end(`<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding:60px;background:#0d1117;color:#e6edf3">
+          <h2 style="color:#58a6ff">Connected to VS Code!</h2>
+          <p style="color:#8b949e">You can close this tab and return to VS Code.</p>
+        </body></html>`);
+
         server.close();
         clearTimeout(timeout);
 
         if (!code || returnedState !== state) {
-          resolve(null);
-          return;
+          resolve(null); return;
         }
 
         const session = await this.exchangeCode(code);
@@ -80,6 +77,11 @@ export class AuthManager {
     });
   }
 
+  async getToken(): Promise<string | null> {
+    const session = await this.getSession();
+    return session?.token ?? null;
+  }
+
   async signOut(): Promise<void> {
     await this.context.secrets.delete(SECRET_KEY);
   }
@@ -91,9 +93,9 @@ export class AuthManager {
   private async exchangeCode(code: string): Promise<UserSession | null> {
     try {
       const res = await fetch(`${API_BASE}/auth/exchange`, {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code }),
+        body:    JSON.stringify({ code }),
       });
       if (!res.ok) return null;
       const session = (await res.json()) as UserSession;
@@ -107,11 +109,15 @@ export class AuthManager {
   private async tryRefresh(session: UserSession): Promise<boolean> {
     try {
       const res = await fetch(`${API_BASE}/auth/refresh`, {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken: session.refreshToken }),
+        body:    JSON.stringify({ refreshToken: session.refreshToken }),
       });
-      if (!res.ok) return false;
+      if (!res.ok) {
+        // Refresh failed — clear stale session so user gets prompted to sign in again
+        await this.context.secrets.delete(SECRET_KEY);
+        return false;
+      }
       const refreshed = (await res.json()) as UserSession;
       await this.saveSession(refreshed);
       return true;

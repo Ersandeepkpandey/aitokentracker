@@ -5,7 +5,7 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL!;
 async function apiFetch(path: string, options: RequestInit = {}) {
   let token: string | null = null;
   try {
-    const { getToken } = auth();
+    const { getToken } = await auth();
     token = await getToken();
   } catch {
     // Client-side call — token passed in options.headers
@@ -30,10 +30,13 @@ async function apiFetch(path: string, options: RequestInit = {}) {
 
 export const api = {
   usage: {
-    summary:  ()                            => apiFetch('/usage/summary'),
-    daily:    (from: string, to: string)    => apiFetch(`/usage/daily?from=${from}&to=${to}`),
-    sessions: (limit = 20, offset = 0)     => apiFetch(`/usage/sessions?limit=${limit}&offset=${offset}`),
-    projects: ()                            => apiFetch('/usage/projects'),
+    summary:         ()                                    => apiFetch('/usage/summary'),
+    daily:           (from: string, to: string)            => apiFetch(`/usage/daily?from=${from}&to=${to}`),
+    sessions:        (limit = 20, offset = 0)              => apiFetch(`/usage/sessions?limit=${limit}&offset=${offset}`),
+    projects:        ()                                    => apiFetch('/usage/projects'),
+    modelComparison: (sessionId: string)                   => apiFetch(`/usage/model-comparison/${sessionId}`),
+    weeklySummary:   ()                                    => apiFetch('/usage/weekly-summary'),
+    insights:        ()                                    => apiFetch('/usage/insights'),
   },
   billing: {
     plans:    ()              => apiFetch('/billing/plans'),
@@ -41,7 +44,11 @@ export const api = {
     portal:   ()              => apiFetch('/billing/portal',   { method: 'POST' }),
   },
   user: {
-    me:             ()             => apiFetch('/user/me'),
-    updateSettings: (s: object)   => apiFetch('/user/settings', { method: 'PUT', body: JSON.stringify(s) }),
+    me:             ()                => apiFetch('/user/me'),
+    updateSettings: (s: object)       => apiFetch('/user/settings', { method: 'PUT', body: JSON.stringify(s) }),
+    getBudgets:     ()                => apiFetch('/user/budget'),
+    setBudget:      (b: { type: string; limitUsd: number; alertAt?: number }) =>
+                    apiFetch('/user/budget', { method: 'PUT', body: JSON.stringify(b) }),
+    deleteBudget:   (type: string)    => apiFetch(`/user/budget/${type}`, { method: 'DELETE' }),
   },
 };

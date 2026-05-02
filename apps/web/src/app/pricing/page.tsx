@@ -16,7 +16,7 @@ const plans = [
     price: 9,
     popular: true,
     description: 'For developers serious about AI costs',
-    features: ['All AI models (Claude, GPT, Gemini)', 'Unlimited history', 'Cost prediction before send', 'Model comparison', 'Budget alerts', 'CSV / JSON export'],
+    features: ['All AI models (Claude, GPT, Gemini)', '365-day history', 'Cost breakdown & daily trends', 'Model cost comparison', 'Budget alerts & spending limits', 'Weekly email digest', 'AI usage insights', 'CSV export'],
     cta: 'Start Pro',
     href: '/sign-up?plan=pro',
   },
@@ -25,10 +25,11 @@ const plans = [
     name: 'Team',
     price: 19,
     per: 'seat',
+    comingSoon: true,
     description: 'For engineering teams',
-    features: ['Everything in Pro', 'Team web dashboard', 'Per-developer attribution', 'Shared budget pools', 'Weekly Slack digest', 'Admin controls'],
-    cta: 'Start Team',
-    href: '/sign-up?plan=team',
+    features: ['Everything in Pro', 'Team web dashboard', 'Per-developer usage tracking', 'Shared team budget', 'Weekly email digest', 'Admin controls'],
+    cta: 'Notify me',
+    href: 'mailto:hello@aitokentracker.com?subject=Team plan interest',
   },
 ];
 
@@ -55,6 +56,11 @@ export default function PricingPage() {
                   Most popular
                 </span>
               )}
+              {(plan as any).comingSoon && (
+                <span className="inline-block bg-gray-100 text-gray-500 text-xs font-medium px-3 py-1 rounded-full mb-3">
+                  Coming soon
+                </span>
+              )}
               <h2 className="text-lg font-semibold mb-1">{plan.name}</h2>
               <div className="mb-2">
                 <span className="text-3xl font-bold">${plan.price}</span>
@@ -73,6 +79,8 @@ export default function PricingPage() {
                 className={`block text-center py-2.5 rounded-lg text-sm font-medium transition-colors ${
                   plan.popular
                     ? 'bg-indigo-600 text-white hover:bg-indigo-700'
+                    : (plan as any).comingSoon
+                    ? 'border border-gray-200 text-gray-400 cursor-default pointer-events-none'
                     : 'border border-gray-300 text-gray-700 hover:bg-gray-50'
                 }`}
               >

@@ -1,13 +1,15 @@
 import { prisma } from '../lib/prisma';
 
 export async function recalcDailyStats(userId: string, date: string): Promise<void> {
+  // Use exclusive upper bound at start of next day so the full day is captured
+  const dayStart = new Date(`${date}T00:00:00.000Z`);
+  const dayEnd   = new Date(dayStart);
+  dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
+
   const sessions = await prisma.usageSession.findMany({
     where: {
       userId,
-      sessionStartedAt: {
-        gte: new Date(`${date}T00:00:00Z`),
-        lt:  new Date(`${date}T23:59:59Z`),
-      },
+      sessionStartedAt: { gte: dayStart, lt: dayEnd },
     },
   });
 

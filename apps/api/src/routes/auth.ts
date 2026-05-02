@@ -1,7 +1,10 @@
 import { FastifyPluginAsync } from 'fastify';
+import { createClerkClient, verifyToken } from '@clerk/backend';
 import { prisma } from '../lib/prisma';
 import { signJwt, signRefreshToken, verifyJwt } from '../lib/jwt';
 import crypto from 'crypto';
+
+const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY! });
 
 // In-memory store for short-lived exchange codes (use Redis in production)
 const exchangeCodes = new Map<string, { userId: string; expiresAt: number }>();
@@ -72,27 +75,58 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // GET /auth/vscode-callback
-  // Website calls this after login to generate a short-lived code and redirect to extension
-  app.get<{ Querystring: { userId: string; state: string; callbackUrl: string } }>(
+  // Called from the web page after the user signs in via Clerk.
+  // Verifies the Clerk token, then generates a short-lived exchange code
+  // and redirects to the extension's local callback server.
+  app.get<{ Querystring: { state: string; callbackUrl: string } }>(
     '/vscode-callback',
     async (req, reply) => {
-      const { userId, state, callbackUrl } = req.query;
+      const { state, callbackUrl } = req.query;
 
-      // Validate callbackUrl is localhost only
-      let url: URL;
+      // SSRF guard — callback must be localhost
+      let cbUrl: URL;
       try {
-        url = new URL(callbackUrl);
+        cbUrl = new URL(callbackUrl);
       } catch {
         return reply.status(400).send({ error: 'Invalid callback URL' });
       }
-      if (url.hostname !== '127.0.0.1' && url.hostname !== 'localhost') {
-        return reply.status(400).send({ error: 'Invalid callback URL' });
+      if (cbUrl.hostname !== '127.0.0.1' && cbUrl.hostname !== 'localhost') {
+        return reply.status(400).send({ error: 'Callback must be localhost' });
+      }
+
+      // Verify the Clerk session token and look up the DB user
+      const bearerToken = req.headers.authorization?.replace('Bearer ', '');
+      if (!bearerToken) {
+        return reply.status(401).send({ error: 'Missing authorization' });
+      }
+      let dbUserId: string;
+      try {
+        const clerkPayload = await verifyToken(bearerToken, { secretKey: process.env.CLERK_SECRET_KEY! });
+        let dbUser = await prisma.user.findUnique({ where: { clerkId: clerkPayload.sub } });
+        if (!dbUser) {
+          // User signed in before webhook fired — decode basic info from the JWT claims
+          // Clerk puts email/name in the token when configured via JWT templates,
+          // otherwise fall back to placeholders (webhook will backfill later).
+          const claims = clerkPayload as any;
+          const email: string = claims.email ?? claims.primary_email_address ?? '';
+          const name: string = claims.name ?? claims.full_name ?? ([claims.first_name, claims.last_name].filter(Boolean).join(' ') || 'User');
+          const avatarUrl: string | undefined = claims.image_url ?? claims.profile_image_url ?? undefined;
+
+          dbUser = await prisma.user.upsert({
+            where:  { clerkId: clerkPayload.sub },
+            update: {},
+            create: { clerkId: clerkPayload.sub, email, name, avatarUrl },
+          });
+        }
+        dbUserId = dbUser.id;
+      } catch {
+        return reply.status(401).send({ error: 'Invalid Clerk token' });
       }
 
       const code = crypto.randomBytes(32).toString('hex');
-      exchangeCodes.set(code, { userId, expiresAt: Date.now() + 60_000 });
+      exchangeCodes.set(code, { userId: dbUserId, expiresAt: Date.now() + 60_000 });
 
-      return reply.redirect(`${callbackUrl}?token=${code}&state=${state}`);
+      return reply.send({ redirectUrl: `${callbackUrl}?token=${code}&state=${state}` });
     }
   );
 };

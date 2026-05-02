@@ -2,8 +2,10 @@ import { FastifyPluginAsync } from 'fastify';
 import { prisma } from '../lib/prisma';
 import { authenticate, requirePlan } from '../middleware/authenticate';
 import { Plan } from '@prisma/client';
-import { calcCost } from '../lib/pricing';
+import { calcCost, PRICING, DEFAULT_TIER } from '../lib/pricing';
 import { recalcDailyStats } from '../services/statsService';
+import { getInsight } from '../services/insightService';
+import { getWeeklySummary } from '../services/weeklyDigest';
 
 export const usageRoutes: FastifyPluginAsync = async (app) => {
 
@@ -97,30 +99,37 @@ export const usageRoutes: FastifyPluginAsync = async (app) => {
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - historyDays);
 
-    const [totalAgg, sessionCount, todayCost, monthCost] = await Promise.all([
+    const today = new Date().toISOString().slice(0, 10);
+    const month = new Date().toISOString().slice(0, 7);
+
+    const [totalAgg, sessionCount, todayStats, monthCost] = await Promise.all([
       prisma.usageSession.aggregate({
         where: { userId, sessionStartedAt: { gte: cutoff } },
-        _sum: { totalCostUsd: true, totalTokens: true },
+        _sum: { totalCostUsd: true, totalTokens: true, inputTokens: true, outputTokens: true },
         _count: true,
       }),
       prisma.usageSession.count({ where: { userId } }),
       prisma.dailyStats.aggregate({
-        where: { userId, date: new Date().toISOString().slice(0, 10) },
-        _sum: { totalCostUsd: true },
+        where: { userId, date: today },
+        _sum: { totalCostUsd: true, inputTokens: true, outputTokens: true },
       }),
       prisma.dailyStats.aggregate({
-        where: { userId, date: { startsWith: new Date().toISOString().slice(0, 7) } },
+        where: { userId, date: { startsWith: month } },
         _sum: { totalCostUsd: true },
       }),
     ]);
 
     return reply.send({
-      totalCostUsd:  totalAgg._sum.totalCostUsd  || 0,
-      totalTokens:   totalAgg._sum.totalTokens   || 0,
+      totalCostUsd:      totalAgg._sum.totalCostUsd    || 0,
+      totalTokens:       totalAgg._sum.totalTokens     || 0,
+      totalInputTokens:  totalAgg._sum.inputTokens     || 0,
+      totalOutputTokens: totalAgg._sum.outputTokens    || 0,
       sessionCount,
-      todayCostUsd:  todayCost._sum.totalCostUsd  || 0,
-      monthCostUsd:  monthCost._sum.totalCostUsd  || 0,
-      plan:          req.userPlan,
+      todayCostUsd:      todayStats._sum.totalCostUsd  || 0,
+      todayInputTokens:  todayStats._sum.inputTokens   || 0,
+      todayOutputTokens: todayStats._sum.outputTokens  || 0,
+      monthCostUsd:      monthCost._sum.totalCostUsd   || 0,
+      plan:              req.userPlan,
       historyDays,
     });
   });
@@ -227,6 +236,99 @@ export const usageRoutes: FastifyPluginAsync = async (app) => {
       return reply.send(csv);
     }
   );
+  // ── POST /usage/pre-send-count ────────────────────────────────────────────
+  // Called by SDK/extension before sending a prompt. Logs the pre-send count
+  // and returns whether to show a warning.
+  app.post<{
+    Body: {
+      sessionId?: string;
+      model: string;
+      inputTokens: number;
+    };
+  }>('/pre-send-count', { preHandler: authenticate }, async (req, reply) => {
+    const { sessionId, model, inputTokens } = req.body;
+    const userId = req.userId;
+
+    // Calc cost for this input
+    const { input: inputCost } = calcCost({
+      model, inputTokens, outputTokens: 0,
+      cacheReadTokens: 0, cacheWriteTokens: 0,
+    });
+
+    // Get user's average input cost over last 30 sessions
+    const recent = await prisma.usageSession.aggregate({
+      where: { userId, sessionStartedAt: { gte: new Date(Date.now() - 30 * 86_400_000) } },
+      _avg: { inputCostUsd: true },
+      _count: true,
+    });
+    const avgInputCost = recent._avg.inputCostUsd ?? 0.01;
+    const warningThreshold = Math.max(avgInputCost * 4, 0.05);
+    const shouldWarn = inputCost > warningThreshold;
+
+    // Persist on the session row if we have one
+    if (sessionId) {
+      await prisma.usageSession.updateMany({
+        where: { id: sessionId, userId },
+        data: { preSendInputTokens: inputTokens, preSendInputCost: inputCost, warningShown: shouldWarn },
+      });
+    }
+
+    return reply.send({ inputTokens, inputCost, warningThreshold, shouldWarn });
+  });
+
+  // ── GET /usage/model-comparison/:sessionId ────────────────────────────────
+  // Returns what the same tokens would have cost on every other model.
+  app.get<{ Params: { sessionId: string } }>(
+    '/model-comparison/:sessionId',
+    { preHandler: [authenticate, requirePlan(Plan.PRO)] },
+    async (req, reply) => {
+      const session = await prisma.usageSession.findFirst({
+        where: { id: req.params.sessionId, userId: req.userId },
+      });
+      if (!session) return reply.status(404).send({ error: 'Session not found' });
+
+      const tokens = {
+        inputTokens:      session.inputTokens,
+        outputTokens:     session.outputTokens,
+        cacheReadTokens:  session.cacheReadTokens,
+        cacheWriteTokens: session.cacheWriteTokens,
+      };
+
+      const models = Object.keys(PRICING).filter(m => m !== session.model);
+      const comparisons = models.map(m => {
+        const cost = calcCost({ model: m, ...tokens });
+        const actualCost = session.totalCostUsd;
+        return {
+          model:     m,
+          totalCost: cost.total,
+          savingPct: actualCost > 0
+            ? Math.round((1 - cost.total / actualCost) * 100)
+            : 0,
+        };
+      }).sort((a, b) => a.totalCost - b.totalCost);
+
+      return reply.send({
+        actualModel:  session.model,
+        actualCost:   session.totalCostUsd,
+        inputTokens:  session.inputTokens,
+        outputTokens: session.outputTokens,
+        comparisons,
+      });
+    }
+  );
+
+  // ── GET /usage/weekly-summary ─────────────────────────────────────────────
+  app.get('/weekly-summary', { preHandler: [authenticate, requirePlan(Plan.PRO)] }, async (req, reply) => {
+    const summary = await getWeeklySummary(req.userId);
+    return reply.send(summary);
+  });
+
+  // ── GET /usage/insights ───────────────────────────────────────────────────
+  app.get('/insights', { preHandler: [authenticate, requirePlan(Plan.PRO)] }, async (req, reply) => {
+    const insight = await getInsight(req.userId);
+    return reply.send({ insight });
+  });
+
 };
 
 function getHistoryDays(plan: Plan): number {

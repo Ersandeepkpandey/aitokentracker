@@ -9,6 +9,7 @@ export default function VsCodeAuthPage() {
   const { getToken } = useAuth();
   const searchParams = useSearchParams();
   const [status, setStatus] = useState<'loading' | 'redirecting' | 'error'>('loading');
+  const [errorMsg, setErrorMsg] = useState('');
 
   const state = searchParams.get('state');
   const callbackUrl = searchParams.get('callback');
@@ -28,13 +29,20 @@ export default function VsCodeAuthPage() {
       const apiBase = process.env.NEXT_PUBLIC_API_URL;
 
       const res = await fetch(
-        `${apiBase}/auth/vscode-callback?userId=${user?.id}&state=${state}&callbackUrl=${encodeURIComponent(callbackUrl!)}`,
+        `${apiBase}/auth/vscode-callback?state=${state}&callbackUrl=${encodeURIComponent(callbackUrl!)}`,
         { headers: { Authorization: `Bearer ${clerkToken}` } }
       );
 
-      if (!res.ok) throw new Error('Failed to generate code');
-      window.location.href = res.url;
-    } catch {
+      if (!res.ok) {
+        const body = await res.text();
+        console.error('[vscode-auth] API error:', res.status, body);
+        throw new Error(body);
+      }
+      const { redirectUrl } = await res.json();
+      window.location.href = redirectUrl;
+    } catch (err: any) {
+      console.error('[vscode-auth] error:', err);
+      setErrorMsg(err?.message || String(err));
       setStatus('error');
     }
   }
@@ -54,7 +62,8 @@ export default function VsCodeAuthPage() {
           </p>
         </div>
         <SignIn
-          redirectUrl={`/auth/vscode?state=${state}&callback=${encodeURIComponent(callbackUrl || '')}`}
+          routing="hash"
+          forceRedirectUrl={`/auth/vscode?state=${state}&callback=${encodeURIComponent(callbackUrl || '')}`}
           appearance={{ elements: { card: 'shadow-none border border-gray-200' } }}
         />
       </Layout>
@@ -76,7 +85,9 @@ export default function VsCodeAuthPage() {
   return (
     <Layout>
       <div className="text-center text-red-500">
-        Something went wrong. Please try again from VS Code.
+        <p className="font-medium">Something went wrong.</p>
+        {errorMsg && <p className="text-xs mt-2 text-red-400 break-all">{errorMsg}</p>}
+        <p className="text-sm mt-3 text-gray-500">Please close this tab and try again from VS Code.</p>
       </div>
     </Layout>
   );
