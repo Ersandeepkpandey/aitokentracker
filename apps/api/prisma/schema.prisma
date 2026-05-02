@@ -1,0 +1,304 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────────────────────
+
+enum Plan {
+  FREE
+  PRO
+  TEAM
+  ENTERPRISE
+}
+
+enum BillingInterval {
+  MONTHLY
+  YEARLY
+}
+
+enum AuditAction {
+  USER_CREATED
+  USER_UPDATED
+  PLAN_CHANGED
+  SESSION_SYNCED
+  BUDGET_ALERT_TRIGGERED
+  TEAM_MEMBER_ADDED
+  TEAM_MEMBER_REMOVED
+  DATA_EXPORTED
+  ACCOUNT_DELETED
+}
+
+// ─────────────────────────────────────────────────────────────
+// USERS
+// ─────────────────────────────────────────────────────────────
+
+model User {
+  id              String    @id @default(cuid())
+  clerkId         String    @unique
+  email           String    @unique
+  name            String
+  avatarUrl       String?
+  plan            Plan      @default(FREE)
+  billingInterval BillingInterval @default(MONTHLY)
+
+  // Stripe
+  stripeCustomerId     String?  @unique
+  stripeSubscriptionId String?  @unique
+  stripePriceId        String?
+  stripeCurrentPeriodEnd DateTime?
+
+  // Onboarding
+  onboardedAt     DateTime?
+  lastActiveAt    DateTime?
+
+  // Settings (stored as JSON for flexibility)
+  settings        Json      @default("{}")
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relations
+  sessions        UsageSession[]
+  dailyStats      DailyStats[]
+  monthlyStats    MonthlyStats[]
+  budgets         Budget[]
+  teamMemberships TeamMember[]
+  ownedTeams      Team[]       @relation("TeamOwner")
+  apiKeys         ApiKey[]
+  auditLogs       AuditLog[]
+
+  @@index([email])
+  @@index([clerkId])
+  @@index([stripeCustomerId])
+  @@index([plan])
+  @@map("users")
+}
+
+// ─────────────────────────────────────────────────────────────
+// USAGE SESSIONS
+// ─────────────────────────────────────────────────────────────
+
+model UsageSession {
+  id                String   @id
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  model             String
+  aiProvider        String   @default("claude")
+  projectName       String   @default("Unknown")
+  workspacePath     String?
+
+  inputTokens       Int      @default(0)
+  outputTokens      Int      @default(0)
+  cacheReadTokens   Int      @default(0)
+  cacheWriteTokens  Int      @default(0)
+  totalTokens       Int      @default(0)
+
+  inputCostUsd      Float    @default(0)
+  outputCostUsd     Float    @default(0)
+  cacheReadCostUsd  Float    @default(0)
+  cacheWriteCostUsd Float    @default(0)
+  totalCostUsd      Float    @default(0)
+
+  turnCount         Int      @default(0)
+  vsCodeVersion     String?
+  extensionVersion  String?
+  osType            String?
+
+  sessionStartedAt  DateTime @default(now())
+  lastUpdatedAt     DateTime @updatedAt
+
+  @@index([userId, lastUpdatedAt])
+  @@index([userId, sessionStartedAt])
+  @@index([userId, projectName])
+  @@index([userId, model])
+  @@index([sessionStartedAt])
+  @@map("usage_sessions")
+}
+
+// ─────────────────────────────────────────────────────────────
+// DAILY STATS
+// ─────────────────────────────────────────────────────────────
+
+model DailyStats {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  date            String
+  projectName     String
+  model           String
+  aiProvider      String
+
+  inputTokens     Int      @default(0)
+  outputTokens    Int      @default(0)
+  cacheReadTokens Int      @default(0)
+  cacheWriteTokens Int     @default(0)
+  totalCostUsd    Float    @default(0)
+  sessionCount    Int      @default(0)
+  turnCount       Int      @default(0)
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([userId, date, projectName, model])
+  @@index([userId, date])
+  @@index([userId, projectName])
+  @@index([date])
+  @@map("daily_stats")
+}
+
+// ─────────────────────────────────────────────────────────────
+// MONTHLY STATS
+// ─────────────────────────────────────────────────────────────
+
+model MonthlyStats {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  yearMonth       String
+  totalCostUsd    Float    @default(0)
+  totalTokens     Int      @default(0)
+  totalSessions   Int      @default(0)
+  totalTurns      Int      @default(0)
+  modelBreakdown  Json     @default("{}")
+
+  updatedAt       DateTime @updatedAt
+
+  @@unique([userId, yearMonth])
+  @@index([userId, yearMonth])
+  @@map("monthly_stats")
+}
+
+// ─────────────────────────────────────────────────────────────
+// BUDGETS
+// ─────────────────────────────────────────────────────────────
+
+model Budget {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type          String
+  limitUsd      Float
+  alertAt       Float    @default(0.8)
+  hardLimit     Boolean  @default(false)
+  active        Boolean  @default(true)
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([userId, type])
+  @@map("budgets")
+}
+
+// ─────────────────────────────────────────────────────────────
+// TEAMS
+// ─────────────────────────────────────────────────────────────
+
+model Team {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  ownerId     String
+  owner       User     @relation("TeamOwner", fields: [ownerId], references: [id])
+
+  plan        Plan     @default(TEAM)
+  stripeCustomerId     String? @unique
+  stripeSubscriptionId String? @unique
+
+  monthlyBudgetUsd Float?
+  settings    Json     @default("{}")
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members     TeamMember[]
+  invites     TeamInvite[]
+
+  @@map("teams")
+}
+
+model TeamMember {
+  id        String   @id @default(cuid())
+  teamId    String
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  role      String   @default("member")
+  joinedAt  DateTime @default(now())
+
+  @@unique([teamId, userId])
+  @@index([userId])
+  @@map("team_members")
+}
+
+model TeamInvite {
+  id        String   @id @default(cuid())
+  teamId    String
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  email     String
+  role      String   @default("member")
+  token     String   @unique @default(cuid())
+  expiresAt DateTime
+  acceptedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([email])
+  @@index([token])
+  @@map("team_invites")
+}
+
+// ─────────────────────────────────────────────────────────────
+// API KEYS
+// ─────────────────────────────────────────────────────────────
+
+model ApiKey {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name        String
+  keyHash     String   @unique
+  keyPrefix   String
+  lastUsedAt  DateTime?
+  expiresAt   DateTime?
+  active      Boolean  @default(true)
+
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@map("api_keys")
+}
+
+// ─────────────────────────────────────────────────────────────
+// AUDIT LOG
+// ─────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id        String      @id @default(cuid())
+  userId    String?
+  user      User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action    AuditAction
+  metadata  Json        @default("{}")
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime    @default(now())
+
+  @@index([userId, createdAt])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_log")
+}

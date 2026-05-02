@@ -1,0 +1,7 @@
+[build]
+builder = "NIXPACKS"
+buildCommand = "pnpm build && pnpx prisma generate"
+
+[deploy]
+startCommand = "pnpx prisma migrate deploy && node dist/index.js"
+healthcheckPath = "/health"

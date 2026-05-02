@@ -1,0 +1,64 @@
+{
+  "name": "ai-token-tracker",
+  "displayName": "AI Token Tracker",
+  "description": "Real-time token usage and cost tracking for Claude, OpenAI, and all AI APIs",
+  "version": "1.0.0",
+  "publisher": "YOUR_PUBLISHER_ID",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other", "Visualization"],
+  "keywords": ["claude", "openai", "tokens", "cost", "ai", "tracker"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "aiTokenTracker.showDashboard",  "title": "AI Token Tracker: Show Dashboard" },
+      { "command": "aiTokenTracker.signIn",          "title": "AI Token Tracker: Sign In" },
+      { "command": "aiTokenTracker.signOut",         "title": "AI Token Tracker: Sign Out" },
+      { "command": "aiTokenTracker.resetSession",    "title": "AI Token Tracker: Reset Current Session" },
+      { "command": "aiTokenTracker.setModel",        "title": "AI Token Tracker: Set Model" },
+      { "command": "aiTokenTracker.viewPlans",       "title": "AI Token Tracker: View Plans" }
+    ],
+    "configuration": {
+      "title": "AI Token Tracker",
+      "properties": {
+        "aiTokenTracker.model": {
+          "type": "string",
+          "default": "claude-sonnet-4",
+          "enum": ["claude-opus-4", "claude-sonnet-4", "claude-haiku-3-5", "gpt-4o", "gpt-4o-mini"],
+          "description": "Default model for cost calculation"
+        },
+        "aiTokenTracker.claudeLogPath": {
+          "type": "string",
+          "default": "",
+          "description": "Custom path to Claude Code logs (auto-detected if empty: ~/.claude)"
+        },
+        "aiTokenTracker.showStatusBar": {
+          "type": "boolean",
+          "default": true
+        },
+        "aiTokenTracker.syncEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Sync usage data to your account (requires sign-in)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile":           "node esbuild.js",
+    "watch":             "node esbuild.js --watch",
+    "vscode:prepublish": "node esbuild.js --production",
+    "package":           "vsce package --no-yarn",
+    "publish":           "vsce publish --no-yarn"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.24.0",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "chokidar": "^3.6.0"
+  }
+}
