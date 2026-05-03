@@ -1,4 +1,3 @@
-import { auth } from '@clerk/nextjs/server';
 import { api } from '@/lib/api';
 import SummaryCards from '@/components/dashboard/SummaryCards';
 import DailyUsageChart from '@/components/charts/DailyUsageChart';
@@ -19,11 +18,6 @@ const PLACEHOLDER_SESSIONS = Array.from({ length: 3 }, (_, i) => ({
 }));
 
 export default async function DashboardPage() {
-  const { sessionClaims } = await auth();
-  // plan is embedded in the JWT via Clerk session metadata
-  const plan = (sessionClaims?.plan as string | undefined) ?? 'free';
-  const isPro = plan !== 'free';
-
   const from = new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10);
   const to   = new Date().toISOString().slice(0, 10);
 
@@ -34,22 +28,24 @@ export default async function DashboardPage() {
   let apiError: string | null = null;
 
   try {
+    // Always fetch summary first — it returns the effective plan (trial = PRO)
+    summary = await api.usage.summary();
+    const isPro = summary?.plan && summary.plan !== 'FREE';
+
     if (isPro) {
-      const [s, sess, d, ins] = await Promise.all([
-        api.usage.summary(),
+      const [sess, d, ins] = await Promise.all([
         api.usage.sessions(10),
         api.usage.daily(from, to),
         api.usage.insights().catch(() => ({ insight: null })),
       ]);
-      summary = s; sessions = sess; dailyStats = d; insight = ins?.insight ?? null;
-    } else {
-      // Free users: only fetch summary (tokens + session count), no cost/session data sent to browser
-      summary = await api.usage.summary();
+      sessions = sess; dailyStats = d; insight = ins?.insight ?? null;
     }
   } catch (err: any) {
     console.error('[dashboard] API error:', err);
     apiError = err?.message ?? 'Failed to load usage data';
   }
+
+  const isPro = summary?.plan && summary.plan !== 'FREE';
 
   if (apiError) {
     return (

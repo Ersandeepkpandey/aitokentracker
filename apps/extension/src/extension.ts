@@ -184,8 +184,10 @@ function updateStatusBar(stats: AllStats) {
   const s = stats.currentSession;
   const sessionTokens = s ? s.totalInput + s.totalOutput : 0;
 
+  const modelShort = (m: string) => m.replace('claude-', '').replace('gpt-', 'gpt/');
+
   if (isPaid() && s) {
-    statusBarItem.text = `$(pulse) ${fmtTokens(sessionTokens)} | $${s.estimatedCost.toFixed(4)}`;
+    statusBarItem.text = `$(pulse) ${modelShort(s.model)} ${fmtTokens(sessionTokens)} $${s.estimatedCost.toFixed(4)}`;
     statusBarItem.tooltip = new vscode.MarkdownString(
       `**Current session**\n\nModel: \`${s.model}\`\n` +
       `Input: ${fmtTokens(s.totalInput)}  Output: ${fmtTokens(s.totalOutput)}\n` +
@@ -193,7 +195,7 @@ function updateStatusBar(stats: AllStats) {
       `*Click to open dashboard*`
     );
   } else if (s) {
-    statusBarItem.text = `$(pulse) ${fmtTokens(sessionTokens)} tokens`;
+    statusBarItem.text = `$(pulse) ${modelShort(s.model)} ${fmtTokens(sessionTokens)}`;
     statusBarItem.tooltip = new vscode.MarkdownString(
       `**Current session**\n\nModel: \`${s.model}\`\n` +
       `Input: ${fmtTokens(s.totalInput)}  Output: ${fmtTokens(s.totalOutput)}\n` +
@@ -204,7 +206,7 @@ function updateStatusBar(stats: AllStats) {
     );
     (statusBarItem.tooltip as vscode.MarkdownString).isTrusted = true;
   } else {
-    statusBarItem.text = `$(pulse) No active session`;
+    statusBarItem.text = `$(pulse) AI Token Tracker`;
     statusBarItem.tooltip = 'AI Token Tracker — no active session\nClick to open dashboard';
   }
 
@@ -231,6 +233,10 @@ function showDashboardPanel(context: vscode.ExtensionContext) {
     }
     if (msg.command === 'setBudget') {
       vscode.commands.executeCommand('aiTokenTracker.setBudget');
+    }
+    if (msg.command === 'signOut') {
+      vscode.commands.executeCommand('aiTokenTracker.signOut');
+      panel.dispose();
     }
   });
 
@@ -475,10 +481,16 @@ function getDashboardHtml(stats: AllStats): string {
     .upgrade-btn { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; border-radius: 6px; padding: 8px 16px; cursor: pointer; font-size: 13px; font-weight: 600; width: 100%; }
     .upgrade-btn:hover { opacity: 0.9; }
     .blurred { filter: blur(4px); pointer-events: none; user-select: none; }
+    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+    .signout-btn { font-size: 11px; color: var(--vscode-descriptionForeground); background: transparent; border: 1px solid var(--vscode-widget-border); border-radius: 4px; padding: 3px 8px; cursor: pointer; }
+    .signout-btn:hover { color: var(--vscode-foreground); }
   </style>
 </head>
 <body>
-  <h2>◈ AI Token Tracker</h2>
+  <div class="header">
+    <h2>◈ AI Token Tracker</h2>
+    <button class="signout-btn" onclick="signOut()">Sign out</button>
+  </div>
 
   ${proActions}
 
@@ -526,6 +538,7 @@ function getDashboardHtml(stats: AllStats): string {
     function upgrade() { vscode.postMessage({ command: 'upgrade' }); }
     function compareModels() { vscode.postMessage({ command: 'compareModels' }); }
     function setBudget() { vscode.postMessage({ command: 'setBudget' }); }
+    function signOut() { vscode.postMessage({ command: 'signOut' }); }
   </script>
 </body>
 </html>`;

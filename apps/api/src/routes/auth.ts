@@ -1,10 +1,9 @@
 import { FastifyPluginAsync } from 'fastify';
-import { createClerkClient, verifyToken } from '@clerk/backend';
+import { verifyToken } from '@clerk/backend';
 import { prisma } from '../lib/prisma';
 import { signJwt, signRefreshToken, verifyJwt } from '../lib/jwt';
 import crypto from 'crypto';
 
-const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY! });
 
 // In-memory store for short-lived exchange codes (use Redis in production)
 const exchangeCodes = new Map<string, { userId: string; expiresAt: number }>();
@@ -27,7 +26,10 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     const user = await prisma.user.findUnique({ where: { id: entry.userId } });
     if (!user) return reply.status(404).send({ error: 'User not found' });
 
-    const token = signJwt({ userId: user.id, plan: user.plan });
+    const isOnTrial = user.trialEndsAt && user.trialEndsAt > new Date() && user.plan === 'FREE';
+    const effectivePlan = isOnTrial ? 'PRO' : user.plan;
+
+    const token = signJwt({ userId: user.id, plan: effectivePlan as any });
     const refreshToken = signRefreshToken(user.id);
 
     await prisma.user.update({
@@ -39,11 +41,12 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       userId: user.id,
       email: user.email,
       name: user.name,
-      plan: user.plan.toLowerCase(),
+      plan: effectivePlan.toLowerCase(),
       avatarUrl: user.avatarUrl,
       token,
       refreshToken,
       expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
+      trialEndsAt: user.trialEndsAt?.toISOString() ?? null,
     });
   });
 
