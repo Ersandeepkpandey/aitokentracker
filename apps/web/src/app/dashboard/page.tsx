@@ -88,6 +88,22 @@ export default async function DashboardPage() {
         </div>
       )}
 
+      {/* Trial countdown banner */}
+      {summary?.trialDaysLeft !== null && summary?.trialDaysLeft !== undefined && (
+        <div className={`rounded-xl p-4 text-sm flex items-center justify-between gap-4 ${
+          summary.trialDaysLeft <= 1
+            ? 'bg-red-50 border border-red-200 text-red-800'
+            : 'bg-amber-50 border border-amber-200 text-amber-800'
+        }`}>
+          <span>
+            ⏳ <strong>{summary.trialDaysLeft} day{summary.trialDaysLeft !== 1 ? 's' : ''} left</strong> in your free trial — upgrade to keep full access.
+          </span>
+          <Link href="/pricing" className="bg-indigo-600 text-white text-xs font-semibold px-4 py-2 rounded-lg hover:bg-indigo-700 whitespace-nowrap">
+            Upgrade now
+          </Link>
+        </div>
+      )}
+
       {summary && <SummaryCards summary={summary} isPro={isPro} />}
 
       {/* Daily chart */}

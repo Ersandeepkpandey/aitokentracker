@@ -3,7 +3,7 @@
   "displayName": "AI Token Tracker",
   "description": "Real-time token usage and cost tracking for Claude, OpenAI, and all AI APIs",
   "version": "1.0.0",
-  "publisher": "YOUR_PUBLISHER_ID",
+  "publisher": "Ersandeepkpandey",
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Other", "Visualization"],
   "keywords": ["claude", "openai", "tokens", "cost", "ai", "tracker"],
@@ -16,7 +16,10 @@
       { "command": "aiTokenTracker.signOut",         "title": "AI Token Tracker: Sign Out" },
       { "command": "aiTokenTracker.resetSession",    "title": "AI Token Tracker: Reset Current Session" },
       { "command": "aiTokenTracker.setModel",        "title": "AI Token Tracker: Set Model" },
-      { "command": "aiTokenTracker.viewPlans",       "title": "AI Token Tracker: View Plans" }
+      { "command": "aiTokenTracker.viewPlans",       "title": "AI Token Tracker: View Plans" },
+      { "command": "aiTokenTracker.setBudget",       "title": "AI Token Tracker: Set Budget" },
+      { "command": "aiTokenTracker.compareModels",   "title": "AI Token Tracker: Compare Models" },
+      { "command": "aiTokenTracker.exportData",      "title": "AI Token Tracker: Export Data (CSV)" }
     ],
     "configuration": {
       "title": "AI Token Tracker",

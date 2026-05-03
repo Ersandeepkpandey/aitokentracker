@@ -16,10 +16,10 @@ async function main() {
     sourcemap: !isProduction,
     define: {
       'process.env.API_BASE': JSON.stringify(
-        isProduction ? 'https://api.aitokentracker.com' : 'http://localhost:3001'
+        isProduction ? 'http://194.164.151.64:3001' : 'http://localhost:3001'
       ),
       'process.env.APP_BASE': JSON.stringify(
-        isProduction ? 'https://aitokentracker.com' : 'http://localhost:3000'
+        isProduction ? 'http://194.164.151.64:3002' : 'http://localhost:3000'
       ),
     },
   });

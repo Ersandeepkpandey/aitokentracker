@@ -1,13 +1,18 @@
 import { FastifyPluginAsync } from 'fastify';
-import Stripe from 'stripe';
+import {
+  lemonSqueezySetup,
+  createCheckout,
+  getSubscription,
+  cancelSubscription,
+} from '@lemonsqueezy/lemonsqueezy.js';
 import { prisma } from '../lib/prisma';
 import { authenticate } from '../middleware/authenticate';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+lemonSqueezySetup({ apiKey: process.env.LEMONSQUEEZY_API_KEY! });
 
-const PLAN_PRICES: Record<string, string> = {
-  pro:  process.env.STRIPE_PRICE_PRO_MONTHLY!,
-  team: process.env.STRIPE_PRICE_TEAM_MONTHLY!,
+const VARIANT_IDS: Record<string, string> = {
+  pro:  process.env.LEMONSQUEEZY_PRO_VARIANT_ID!,
+  team: process.env.LEMONSQUEEZY_TEAM_VARIANT_ID!,
 };
 
 export const billingRoutes: FastifyPluginAsync = async (app) => {
@@ -16,14 +21,14 @@ export const billingRoutes: FastifyPluginAsync = async (app) => {
   app.get('/plans', async (_req, reply) => {
     return reply.send({
       plans: [
-        { id: 'free',  name: 'Free',  priceMonthly: 0,  features: ['Claude tracking', '30-day history', 'Local tracking'] },
-        { id: 'pro',   name: 'Pro',   priceMonthly: 9,  features: ['All AI models', 'Unlimited history', 'Cost prediction', 'Model comparison', 'Budget alerts', 'CSV export'] },
-        { id: 'team',  name: 'Team',  priceMonthly: 19, features: ['Everything in Pro', 'Team dashboard', 'Per-dev attribution', 'Shared budgets', 'Slack reports'] },
+        { id: 'free', name: 'Free',  priceMonthly: 0,  features: ['Claude tracking', '30-day history', 'Status bar'] },
+        { id: 'pro',  name: 'Pro',   priceMonthly: 9,  features: ['All AI models', '365-day history', 'Cost breakdown', 'Model comparison', 'Budget alerts', 'Weekly digest', 'CSV export'] },
+        { id: 'team', name: 'Team',  priceMonthly: 19, features: ['Everything in Pro', 'Team dashboard', 'Admin controls'] },
       ],
     });
   });
 
-  // POST /billing/checkout — create Stripe checkout session
+  // POST /billing/checkout — create Lemon Squeezy checkout
   app.post<{ Body: { plan: 'pro' | 'team' } }>(
     '/checkout',
     { preHandler: authenticate },
@@ -31,49 +36,64 @@ export const billingRoutes: FastifyPluginAsync = async (app) => {
       const user = await prisma.user.findUnique({ where: { id: req.userId } });
       if (!user) return reply.status(404).send({ error: 'User not found' });
 
-      const priceId = PLAN_PRICES[req.body.plan];
-      if (!priceId) return reply.status(400).send({ error: 'Invalid plan' });
+      const variantId = VARIANT_IDS[req.body.plan];
+      if (!variantId) return reply.status(400).send({ error: 'Invalid plan' });
 
-      let customerId = user.stripeCustomerId;
-      if (!customerId) {
-        const customer = await stripe.customers.create({
+      const storeId = process.env.LEMONSQUEEZY_STORE_ID!;
+
+      const { data, error } = await createCheckout(storeId, variantId, {
+        checkoutData: {
           email: user.email,
-          name: user.name,
-          metadata: { userId: user.id },
-        });
-        customerId = customer.id;
-        await prisma.user.update({
-          where: { id: user.id },
-          data: { stripeCustomerId: customer.id },
-        });
-      }
-
-      const session = await stripe.checkout.sessions.create({
-        customer: customerId,
-        mode: 'subscription',
-        payment_method_types: ['card'],
-        line_items: [{ price: priceId, quantity: 1 }],
-        success_url: `${process.env.APP_BASE_URL}/dashboard?upgrade=success`,
-        cancel_url:  `${process.env.APP_BASE_URL}/pricing?upgrade=cancelled`,
-        metadata: { userId: user.id, plan: req.body.plan },
+          name:  user.name,
+          custom: { userId: user.id, plan: req.body.plan },
+        },
+        checkoutOptions: {
+          embed: false,
+          media: true,
+          logo:  true,
+        },
+        productOptions: {
+          redirectUrl:    `${process.env.APP_BASE}/dashboard?upgrade=success`,
+          receiptLinkUrl: `${process.env.APP_BASE}/dashboard`,
+        },
       });
 
-      return reply.send({ url: session.url });
+      if (error || !data) {
+        return reply.status(500).send({ error: 'Failed to create checkout' });
+      }
+
+      return reply.send({ url: data.data.attributes.url });
     }
   );
 
-  // POST /billing/portal — manage subscription
-  app.post('/portal', { preHandler: authenticate }, async (req, reply) => {
+  // POST /billing/cancel — cancel subscription
+  app.post('/cancel', { preHandler: authenticate }, async (req, reply) => {
     const user = await prisma.user.findUnique({ where: { id: req.userId } });
-    if (!user?.stripeCustomerId) {
-      return reply.status(400).send({ error: 'No billing account found' });
+    if (!user?.stripeSubscriptionId) {
+      return reply.status(400).send({ error: 'No active subscription' });
     }
 
-    const session = await stripe.billingPortal.sessions.create({
-      customer: user.stripeCustomerId,
-      return_url: `${process.env.APP_BASE_URL}/dashboard`,
-    });
+    const { error } = await cancelSubscription(user.stripeSubscriptionId);
+    if (error) return reply.status(500).send({ error: 'Failed to cancel' });
 
-    return reply.send({ url: session.url });
+    return reply.send({ cancelled: true });
+  });
+
+  // GET /billing/subscription — get current subscription status
+  app.get('/subscription', { preHandler: authenticate }, async (req, reply) => {
+    const user = await prisma.user.findUnique({ where: { id: req.userId } });
+    if (!user?.stripeSubscriptionId) {
+      return reply.send({ plan: 'free', status: null });
+    }
+
+    const { data, error } = await getSubscription(user.stripeSubscriptionId);
+    if (error || !data) return reply.send({ plan: user.plan, status: 'unknown' });
+
+    return reply.send({
+      plan:   user.plan,
+      status: data.data.attributes.status,
+      renewsAt: data.data.attributes.renews_at,
+      endsAt:   data.data.attributes.ends_at,
+    });
   });
 };

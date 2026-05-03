@@ -23,13 +23,16 @@ export async function authenticate(req: FastifyRequest, reply: FastifyReply) {
     const payload = verifyJwt(token);
     const user = await prisma.user.findUnique({
       where:  { id: payload.userId },
-      select: { id: true, plan: true, clerkId: true },
+      select: { id: true, plan: true, clerkId: true, trialEndsAt: true },
     });
     if (user) {
+      const effectivePlan = (user.trialEndsAt && user.trialEndsAt > new Date() && user.plan === Plan.FREE)
+        ? Plan.PRO
+        : user.plan;
       req.userId      = user.id;
-      req.userPlan    = user.plan;
+      req.userPlan    = effectivePlan;
       req.clerkUserId = user.clerkId;
-      return; // authenticated
+      return;
     }
   } catch {
     // Not our JWT — fall through to Clerk verification
@@ -45,7 +48,7 @@ export async function authenticate(req: FastifyRequest, reply: FastifyReply) {
 
     let user = await prisma.user.findUnique({
       where:  { clerkId: clerkUserId },
-      select: { id: true, plan: true, clerkId: true },
+      select: { id: true, plan: true, clerkId: true, trialEndsAt: true },
     });
 
     // Auto-provision user if they signed in via Clerk but the webhook hasn't fired yet
@@ -58,13 +61,20 @@ export async function authenticate(req: FastifyRequest, reply: FastifyReply) {
       user = await prisma.user.upsert({
         where:  { clerkId: clerkUserId },
         update: {},
-        create: { clerkId: clerkUserId, email, name, avatarUrl },
-        select: { id: true, plan: true, clerkId: true },
+        create: { clerkId: clerkUserId, email, name, avatarUrl, trialEndsAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) },
+        select: { id: true, plan: true, clerkId: true, trialEndsAt: true },
       });
     }
 
+    if (!user) return reply.status(401).send({ error: 'User not found' });
+
+    // Active trial → treat as PRO
+    const effectivePlan = (user.trialEndsAt && user.trialEndsAt > new Date() && user.plan === Plan.FREE)
+      ? Plan.PRO
+      : user.plan;
+
     req.userId      = user.id;
-    req.userPlan    = user.plan;
+    req.userPlan    = effectivePlan;
     req.clerkUserId = user.clerkId;
   } catch (err) {
     console.error('[auth] Clerk token verification failed:', err);

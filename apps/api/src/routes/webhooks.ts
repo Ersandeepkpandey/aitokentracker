@@ -1,92 +1,98 @@
 import { FastifyPluginAsync } from 'fastify';
-import Stripe from 'stripe';
 import { Webhook } from 'svix';
 import { prisma } from '../lib/prisma';
 import { Plan } from '@prisma/client';
+import crypto from 'crypto';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
-
-function priceIdToPlan(priceId: string): Plan {
+function variantIdToPlan(variantId: string): Plan {
   const map: Record<string, Plan> = {
-    [process.env.STRIPE_PRICE_PRO_MONTHLY!]:  Plan.PRO,
-    [process.env.STRIPE_PRICE_TEAM_MONTHLY!]: Plan.TEAM,
+    [process.env.LEMONSQUEEZY_PRO_VARIANT_ID!]:  Plan.PRO,
+    [process.env.LEMONSQUEEZY_TEAM_VARIANT_ID!]: Plan.TEAM,
   };
-  return map[priceId] || Plan.FREE;
+  return map[variantId] || Plan.FREE;
 }
 
 export const webhookRoutes: FastifyPluginAsync = async (app) => {
 
-  // Stripe requires raw body
   app.addContentTypeParser(
     'application/json',
     { parseAs: 'buffer', bodyLimit: 10 * 1024 * 1024 },
     (_req, body, done) => done(null, body)
   );
 
-  // POST /webhooks/stripe
-  app.post('/stripe', async (req, reply) => {
-    const sig = req.headers['stripe-signature'] as string;
-    let event: Stripe.Event;
+  // POST /webhooks/lemonsqueezy
+  app.post('/lemonsqueezy', async (req, reply) => {
+    const rawBody  = req.body as Buffer;
+    const secret   = process.env.LEMONSQUEEZY_WEBHOOK_SECRET!;
+    const signature = req.headers['x-signature'] as string;
 
-    try {
-      event = stripe.webhooks.constructEvent(
-        req.body as Buffer,
-        sig,
-        process.env.STRIPE_WEBHOOK_SECRET!
-      );
-    } catch {
+    // Verify HMAC-SHA256 signature
+    const hmac = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
+    if (!crypto.timingSafeEqual(Buffer.from(hmac), Buffer.from(signature || ''))) {
       return reply.status(400).send({ error: 'Invalid signature' });
     }
 
-    switch (event.type) {
-      case 'checkout.session.completed': {
-        const session = event.data.object as Stripe.Checkout.Session;
-        if (session.mode === 'subscription' && session.metadata?.userId) {
-          const planKey = session.metadata.plan === 'team'
-            ? process.env.STRIPE_PRICE_TEAM_MONTHLY!
-            : process.env.STRIPE_PRICE_PRO_MONTHLY!;
+    const event = JSON.parse(rawBody.toString('utf8'));
+    const eventName  = event.meta?.event_name as string;
+    const attrs      = event.data?.attributes;
+    const customData = event.meta?.custom_data ?? attrs?.first_order_item?.custom_data ?? {};
+    const userId     = customData?.userId as string | undefined;
+
+    switch (eventName) {
+      case 'order_created': {
+        // One-time or first subscription payment
+        if (userId) {
+          const variantId = String(attrs?.first_order_item?.variant_id ?? '');
           await prisma.user.update({
-            where: { id: session.metadata.userId },
-            data: {
-              plan: priceIdToPlan(planKey),
-              stripeSubscriptionId: session.subscription as string,
+            where: { id: userId },
+            data:  { plan: variantIdToPlan(variantId) },
+          });
+        }
+        break;
+      }
+
+      case 'subscription_created':
+      case 'subscription_updated': {
+        const variantId      = String(attrs?.variant_id ?? '');
+        const subscriptionId = String(event.data?.id ?? '');
+        const status         = attrs?.status as string;
+        const renewsAt       = attrs?.renews_at ? new Date(attrs.renews_at) : null;
+
+        const plan = status === 'active' || status === 'on_trial'
+          ? variantIdToPlan(variantId)
+          : Plan.FREE;
+
+        if (userId) {
+          await prisma.user.update({
+            where: { id: userId },
+            data:  {
+              plan,
+              stripeSubscriptionId:  subscriptionId,
+              stripeCurrentPeriodEnd: renewsAt,
             },
           });
         }
         break;
       }
 
-      case 'customer.subscription.updated': {
-        const sub = event.data.object as Stripe.Subscription;
-        const priceId = sub.items.data[0].price.id;
+      case 'subscription_cancelled':
+      case 'subscription_expired': {
+        const subscriptionId = String(event.data?.id ?? '');
         await prisma.user.updateMany({
-          where: { stripeCustomerId: sub.customer as string },
-          data: {
-            plan: priceIdToPlan(priceId),
-            stripePriceId: priceId,
-            stripeCurrentPeriodEnd: new Date(sub.current_period_end * 1000),
-          },
-        });
-        break;
-      }
-
-      case 'customer.subscription.deleted': {
-        const sub = event.data.object as Stripe.Subscription;
-        await prisma.user.updateMany({
-          where: { stripeCustomerId: sub.customer as string },
-          data: { plan: Plan.FREE, stripeSubscriptionId: null, stripePriceId: null },
+          where: { stripeSubscriptionId: subscriptionId },
+          data:  { plan: Plan.FREE, stripeSubscriptionId: null },
         });
         break;
       }
     }
 
+    // POST /webhooks/clerk
     return reply.send({ received: true });
   });
 
   // POST /webhooks/clerk
   app.post('/clerk', async (req, reply) => {
-    const wh = new Webhook(process.env.CLERK_WEBHOOK_SECRET!);
-    // req.body is a Buffer (raw parser above) — pass it directly, not JSON.stringify
+    const wh   = new Webhook(process.env.CLERK_WEBHOOK_SECRET!);
     const body = req.body as Buffer;
     let event: any;
 
@@ -100,23 +106,24 @@ export const webhookRoutes: FastifyPluginAsync = async (app) => {
       return reply.status(400).send({ error: 'Invalid signature' });
     }
 
-    // svix returns the parsed payload — but if it doesn't, parse manually
     const payload = typeof event === 'object' ? event : JSON.parse(body.toString('utf8'));
 
     if (payload.type === 'user.created') {
       const { id, email_addresses, first_name, last_name, image_url } = payload.data;
+      const trialEndsAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
       await prisma.user.upsert({
-        where: { clerkId: id },
+        where:  { clerkId: id },
         update: {
-          email: email_addresses[0]?.email_address || '',
-          name: `${first_name || ''} ${last_name || ''}`.trim() || 'User',
+          email:     email_addresses[0]?.email_address || '',
+          name:      `${first_name || ''} ${last_name || ''}`.trim() || 'User',
           avatarUrl: image_url ?? null,
         },
         create: {
-          clerkId: id,
-          email: email_addresses[0]?.email_address || '',
-          name: `${first_name || ''} ${last_name || ''}`.trim() || 'User',
-          avatarUrl: image_url ?? null,
+          clerkId:     id,
+          email:       email_addresses[0]?.email_address || '',
+          name:        `${first_name || ''} ${last_name || ''}`.trim() || 'User',
+          avatarUrl:   image_url ?? null,
+          trialEndsAt,
         },
       });
     }
@@ -125,9 +132,9 @@ export const webhookRoutes: FastifyPluginAsync = async (app) => {
       const { id, email_addresses, first_name, last_name, image_url } = payload.data;
       await prisma.user.updateMany({
         where: { clerkId: id },
-        data: {
-          email: email_addresses[0]?.email_address || '',
-          name: `${first_name || ''} ${last_name || ''}`.trim() || 'User',
+        data:  {
+          email:     email_addresses[0]?.email_address || '',
+          name:      `${first_name || ''} ${last_name || ''}`.trim() || 'User',
           avatarUrl: image_url ?? null,
         },
       });

@@ -56,6 +56,9 @@ model User {
   stripePriceId        String?
   stripeCurrentPeriodEnd DateTime?
 
+  // Trial
+  trialEndsAt     DateTime?
+
   // Onboarding
   onboardedAt     DateTime?
   lastActiveAt    DateTime?

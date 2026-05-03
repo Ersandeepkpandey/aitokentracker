@@ -119,6 +119,15 @@ export const usageRoutes: FastifyPluginAsync = async (app) => {
       }),
     ]);
 
+    const userRecord = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { trialEndsAt: true, plan: true },
+    });
+    const isOnTrial = userRecord?.plan === 'FREE' && userRecord?.trialEndsAt && userRecord.trialEndsAt > new Date();
+    const trialDaysLeft = isOnTrial
+      ? Math.ceil((userRecord!.trialEndsAt!.getTime() - Date.now()) / 86_400_000)
+      : null;
+
     return reply.send({
       totalCostUsd:      totalAgg._sum.totalCostUsd    || 0,
       totalTokens:       totalAgg._sum.totalTokens     || 0,
@@ -131,6 +140,7 @@ export const usageRoutes: FastifyPluginAsync = async (app) => {
       monthCostUsd:      monthCost._sum.totalCostUsd   || 0,
       plan:              req.userPlan,
       historyDays,
+      trialDaysLeft,
     });
   });
 
