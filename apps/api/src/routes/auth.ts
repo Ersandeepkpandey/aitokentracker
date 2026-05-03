@@ -112,10 +112,11 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
           const name: string = claims.name ?? claims.full_name ?? ([claims.first_name, claims.last_name].filter(Boolean).join(' ') || 'User');
           const avatarUrl: string | undefined = claims.image_url ?? claims.profile_image_url ?? undefined;
 
+          const trialEndsAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
           dbUser = await prisma.user.upsert({
             where:  { clerkId: clerkPayload.sub },
             update: {},
-            create: { clerkId: clerkPayload.sub, email, name, avatarUrl },
+            create: { clerkId: clerkPayload.sub, email, name, avatarUrl, trialEndsAt },
           });
         }
         dbUserId = dbUser.id;
